@@ -1,0 +1,54 @@
+name: docker-telegram-monitor
+
+x-common: &common
+  build: .
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "5m"
+      max-file: "2"
+
+services:
+  collector:
+    <<: *common
+    command: ["python", "collector.py"]
+    user: "0:0"
+    network_mode: none
+    environment:
+      WATCH_CONTAINERS: ${WATCH_CONTAINERS:-}
+    volumes:
+      - type: bind
+        source: ${DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      - snapshot:/snapshot
+
+  bot:
+    <<: *common
+    environment:
+      WATCH_CONTAINERS: ${WATCH_CONTAINERS:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-0}
+      SERVER_NAME: ${SERVER_NAME:-Сервер}
+    depends_on:
+      - collector
+    secrets:
+      - telegram_token
+    volumes:
+      - snapshot:/snapshot:ro
+      - alerts:/data
+
+secrets:
+  telegram_token:
+    file: ./private/telegram_token
+
+volumes:
+  snapshot:
+  alerts:
