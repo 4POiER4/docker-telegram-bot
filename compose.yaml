@@ -36,6 +36,7 @@ services:
     environment:
       WATCH_CONTAINERS: ${WATCH_CONTAINERS:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-0}
+      TELEGRAM_STATUS_CHAT_IDS: ${TELEGRAM_STATUS_CHAT_IDS:-}
       SERVER_NAME: ${SERVER_NAME:-Сервер}
     depends_on:
       - collector

@@ -93,7 +93,7 @@ def connect_chat(telegram):
             message = update.get("message", {})
             chat = message.get("chat", {})
             if chat.get("type") == "private" and message.get("text", "").strip() == command:
-                print(f"Добавь в .env строку TELEGRAM_CHAT_ID={chat['id']}")
+                print(f"ID личного чата: {chat['id']}")
                 return
     raise SystemExit("Время вышло. Запусти команду chat-id снова.")
 
@@ -159,10 +159,11 @@ def alert_changes(containers, error, reported):
     return active, lines
 
 
-def handle_update(telegram, chat_id, title, names, update):
+def handle_update(telegram, status_chat_ids, title, names, update):
     message = update.get("message", {})
     chat = message.get("chat", {})
-    if chat.get("id") != chat_id or chat.get("type") != "private":
+    chat_id = chat.get("id")
+    if chat.get("type") != "private" or chat_id not in status_chat_ids:
         return
     text = message.get("text", "").strip()
     command = text.split(maxsplit=1)[0].split("@", 1)[0] if text else ""
@@ -174,7 +175,7 @@ def handle_update(telegram, chat_id, title, names, update):
         telegram.send(chat_id, f"Контейнеры · {title}", lines)
 
 
-def monitor(telegram, chat_id, names, title):
+def monitor(telegram, chat_id, status_chat_ids, names, title):
     saved = read_json(ALERT_STATE) or {}
     reported = {}
     if saved.get("chat_id") == chat_id:
@@ -195,13 +196,28 @@ def monitor(telegram, chat_id, names, title):
                     write_json(ALERT_STATE, {"chat_id": chat_id, "reported": active})
                     reported = active
             for update in telegram.updates(offset):
-                handle_update(telegram, chat_id, title, names, update)
+                try:
+                    handle_update(telegram, status_chat_ids, title, names, update)
+                except TelegramError as error:
+                    if error.code != 403:
+                        raise
+                    logging.warning("Telegram отклонил ответ одному из чатов (403).")
                 offset = update["update_id"] + 1
         except TelegramError as error:
             if error.code in {401, 404, 409}:
                 raise
             logging.warning("%s. Повтор через %s с.", error, error.retry_after)
             time.sleep(error.retry_after)
+
+
+def configured_chats():
+    owner = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not re.fullmatch(r"[1-9]\d*", owner):
+        raise ValueError("Укажи TELEGRAM_CHAT_ID в .env. См. команду chat-id в README.")
+    extra = os.environ.get("TELEGRAM_STATUS_CHAT_IDS", "").replace(",", " ").split()
+    if any(not re.fullmatch(r"[1-9]\d*", chat_id) for chat_id in extra):
+        raise ValueError("Укажи в TELEGRAM_STATUS_CHAT_IDS числовые ID личных чатов через запятую.")
+    return int(owner), {int(chat_id) for chat_id in [owner, *extra]}
 
 
 def main():
@@ -214,11 +230,9 @@ def main():
         if sys.argv[1:] == ["chat-id"]:
             connect_chat(telegram)
             return
-        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-        if not re.fullmatch(r"[1-9]\d*", chat_id):
-            raise ValueError("Укажи TELEGRAM_CHAT_ID в .env. См. команду chat-id в README.")
+        owner, status_chat_ids = configured_chats()
         title = os.environ.get("SERVER_NAME", "").strip()[:60] or "Сервер"
-        monitor(telegram, int(chat_id), container_names(), title)
+        monitor(telegram, owner, status_chat_ids, container_names(), title)
     except OSError as error:
         raise SystemExit(f"Ошибка доступа к файлу: {error.filename or type(error).__name__}") from None
     except ValueError as error:
